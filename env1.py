@@ -7,11 +7,11 @@ from tf_agents.trajectories import time_step as ts
 from joblib import load
 
 class CustomEnvironment(py_environment.PyEnvironment):
-    def __init__(self, image_path, agent_speed=0.05):
+    def __init__(self, image_path, agent_speed=0.005):
         # Завантаження зображення місцевості
         self.terrain_map = plt.imread(image_path)
         self.image_height, self.image_width, _ = self.terrain_map.shape
-        self.start_position = [0.5, 0]
+        self.start_position = [0.1, 0]
         self.agent_position = self.start_position  # Початкове положення агента
 
         self.model_speed_coef = load('./img_analyse/model.joblib')
@@ -21,7 +21,7 @@ class CustomEnvironment(py_environment.PyEnvironment):
         self._observation_spec = array_spec.BoundedArraySpec(
             shape=(2,), dtype=np.float32, minimum=0, maximum=1, name='observation')
         self._action_spec = array_spec.BoundedArraySpec(
-            shape=(1,), dtype=np.int32, minimum=0, maximum=4, name='action')
+            shape=(), dtype=np.int32, minimum=0, maximum=4, name='action')
 
         # Ініціалізація стану
         self._state = 0
@@ -36,7 +36,12 @@ class CustomEnvironment(py_environment.PyEnvironment):
     def _reset(self):
         self._state = 0
         self._episode_ended = False
-        return ts.restart(np.array([self.start_position], dtype=np.float32))
+        return ts.restart(np.array(self.start_position, dtype=np.float32))
+
+    def _observe(self):
+        # Переконайтеся, що спостереження відповідає формі визначеній у observation_spec
+        # У цьому прикладі ми припускаємо, що agent_position - це список або масив з двома елементами
+        return np.array(self.agent_position, dtype=np.float32)
 
     def _step(self, action):
         # Логіка руху агента
@@ -56,13 +61,19 @@ class CustomEnvironment(py_environment.PyEnvironment):
             self.agent_position[0] -= self.agent_speed*speed_coef
         elif action == 3:  # вправо
             self.agent_position[0] += self.agent_speed*speed_coef
-
-
-        reward=-100
-        if self._episode_ended:
-            return ts.termination(np.array([self.agent_position], dtype=np.float32), reward)
+        
+        if self.agent_position[1] >= 1.0:
+            # Агент досяг нижньої межі, видаємо додаткову нагороду
+            return ts.termination(np.array(self.agent_position, dtype=np.float32), reward=10000.0)
+        elif speed_coef<0.2 or self.agent_position[1] < 0 or self.agent_position[0] < 0 or self.agent_position[0] > 1:
+            # Агент вийшов за межі середовища, видаємо від'ємну нагороду
+            return ts.termination(np.array(self.agent_position, dtype=np.float32), reward=-10000.0)
         else:
-            return ts.transition(np.array([self.agent_position], dtype=np.float32), reward=1.0, discount=0.9)
+            # Якщо епізод ще не завершився
+            return ts.transition(np.array(self.agent_position, dtype=np.float32), reward=-1+200*self.agent_position[1]*speed_coef, discount=0.9)
+
+
+    
 
     def get_pixel_color(self, agent_position):
         # Перетворення нормалізованих координат у індекси пікселів
@@ -84,6 +95,3 @@ class CustomEnvironment(py_environment.PyEnvironment):
             speed_coef = self.model_speed_coef.predict([rgb])[0]
             return speed_coef
     
-# Створення екземпляру середовища
-env = CustomEnvironment(image_path='./img/output1small.png')
-tf_env = tf_py_environment.TFPyEnvironment(env)
